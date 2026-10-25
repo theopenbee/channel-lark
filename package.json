@@ -1,0 +1,46 @@
+{
+  "name": "@theopenbee/channel-lark",
+  "version": "0.1.0",
+  "description": "Feishu / Lark channel plugin for openbee",
+  "keywords": [
+    "openbee",
+    "openbee-plugin",
+    "feishu",
+    "lark"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theopenbee/channel-lark.git"
+  },
+  "homepage": "https://github.com/theopenbee/channel-lark#readme",
+  "bugs": {
+    "url": "https://github.com/theopenbee/channel-lark/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "openbee.plugin.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.mjs",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0",
+    "@theopenbee/channel-sdk": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

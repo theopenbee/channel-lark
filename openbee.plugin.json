@@ -1,0 +1,40 @@
+{
+  "protocol_version": 1,
+  "id": "feishu",
+  "name": { "en": "Feishu / Lark", "zh": "飞书" },
+  "description": { "en": "Feishu / Lark bot channel", "zh": "飞书 / Lark 机器人渠道" },
+  "command": ["node", "dist/index.js"],
+  "config": [
+    {
+      "key": "app_id",
+      "type": "string",
+      "required": true,
+      "label": { "en": "App ID", "zh": "App ID" },
+      "help": { "en": "App ID of the self-built app, from the Feishu / Lark developer console (cli_...)", "zh": "飞书 / Lark 开发者后台中自建应用的 App ID（cli_...）" }
+    },
+    {
+      "key": "app_secret",
+      "type": "secret",
+      "required": true,
+      "label": { "en": "App Secret", "zh": "App Secret" },
+      "help": { "en": "App Secret of the same app", "zh": "同一应用的 App Secret" }
+    },
+    {
+      "key": "max_media_size",
+      "type": "int",
+      "default": 104857600,
+      "label": { "en": "Max attachment size (bytes)", "zh": "附件大小上限（字节）" },
+      "help": { "en": "Largest inbound attachment downloaded, in bytes", "zh": "下载的收到附件的最大字节数" }
+    },
+    {
+      "key": "domain",
+      "type": "string",
+      "default": "feishu",
+      "label": { "en": "Open platform domain", "zh": "开放平台域名" },
+      "help": {
+        "en": "Advanced: feishu (open.feishu.cn), lark (open.larksuite.com) or a base URL such as a reverse proxy",
+        "zh": "高级设置：feishu（open.feishu.cn）、lark（open.larksuite.com）或一个基础 URL（例如反向代理）"
+      }
+    }
+  ]
+}
