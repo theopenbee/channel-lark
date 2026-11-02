@@ -571,3 +571,79 @@ test("SDK log output is forwarded without secrets", async (t) => {
     assert.doesNotMatch(JSON.stringify(l), new RegExp(TOKEN));
   }
 });
+
+const dropConnection = (call, res) => {
+  res.socket.destroy();
+  return "handled";
+};
+
+const retryLogs = (logs) => logs.filter((l) => l.level === "warn" && l.message === "download media failed, retrying");
+
+test("a dropped download is retried until the image arrives", async (t) => {
+  let drops = 2;
+  const fake = await fakeFeishu(t, {
+    resource: (call, res) => (drops-- > 0 ? dropConnection(call, res) : undefined),
+  });
+  fake.resources.set("img_flaky", PNG);
+  const { connector, dispatched, logs } = await startChannel(t, fake);
+  await connector.deliver(
+    messageEvent({ type: "post", content: { title: "", content: [[{ tag: "text", text: "see" }], [{ tag: "img", image_key: "img_flaky" }]] } }),
+  );
+  await waitUntil(() => dispatched.length === 1);
+  assert.equal(dispatched[0].text, "see");
+  assert.deepEqual(readFileSync(dispatched[0].attachments[0].path), PNG);
+  assert.equal(fake.of("resource").length, 3);
+  const retries = retryLogs(logs);
+  assert.equal(retries.length, 2);
+  assert.equal(retries[0].fields.key, "img_flaky");
+  assert.ok(retries[0].fields.error);
+});
+
+test("a download that keeps failing stops after three attempts", async (t) => {
+  const fake = await fakeFeishu(t, { resource: dropConnection });
+  const { connector, dispatched, logs } = await startChannel(t, fake);
+  await connector.deliver(messageEvent({ type: "image", content: { image_key: "img_down" } }));
+  await waitUntil(() => dispatched.length === 1);
+  assert.deepEqual(dispatched[0].attachments, [{ type: "image", path: "" }]);
+  assert.equal(fake.of("resource").length, 3);
+  assert.equal(retryLogs(logs).length, 2);
+  assert.equal(logs.filter((l) => l.level === "error" && l.message === "download media failed").length, 1);
+});
+
+test("a Feishu error response is retried", async (t) => {
+  const fake = await fakeFeishu(t);
+  const { connector, dispatched } = await startChannel(t, fake);
+  await connector.deliver(messageEvent({ type: "image", content: { image_key: "img_missing" } }));
+  await waitUntil(() => dispatched.length === 1);
+  assert.equal(fake.of("resource").length, 3);
+});
+
+test("oversized resources are not retried", async (t) => {
+  const fake = await fakeFeishu(t, {
+    resource: (call, res) => {
+      if (call.params[1] !== "file_rejected") return undefined;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ code: 234037, msg: "file size exceeds limit" }));
+      return "handled";
+    },
+  });
+  fake.resources.set("file_big", Buffer.alloc(2048));
+  const { connector, dispatched, logs } = await startChannel(t, fake, { config: { max_media_size: 1024 } });
+  await connector.deliver(messageEvent({ messageId: "om_big", type: "file", content: { file_key: "file_big", file_name: "big.zip" } }));
+  await connector.deliver(messageEvent({ messageId: "om_rejected", type: "file", content: { file_key: "file_rejected", file_name: "huge.zip" } }));
+  await waitUntil(() => dispatched.length === 2);
+  assert.equal(fake.of("resource").filter((c) => c.params[1] === "file_big").length, 1);
+  assert.equal(fake.of("resource").filter((c) => c.params[1] === "file_rejected").length, 1);
+  assert.equal(retryLogs(logs).length, 0);
+});
+
+test("stopping the channel cancels a pending download retry", async (t) => {
+  const fake = await fakeFeishu(t, { resource: dropConnection });
+  const { connector, dispatched, handle, logs } = await startChannel(t, fake, { timing: { retryDelay: 60_000 } });
+  await connector.deliver(messageEvent({ type: "image", content: { image_key: "img_down" } }));
+  await waitUntil(() => retryLogs(logs).length === 1);
+  await handle.stop();
+  await waitUntil(() => dispatched.length === 1);
+  assert.deepEqual(dispatched[0].attachments, [{ type: "image", path: "" }]);
+  assert.equal(fake.of("resource").length, 1);
+});

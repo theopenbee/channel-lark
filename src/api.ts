@@ -6,6 +6,7 @@ import { errorText } from "./helpers.js";
 
 export const REQUEST_TIMEOUT = 120_000;
 const ERROR_BODY_LIMIT = 64 * 1024;
+const RESOURCE_SIZE_LIMIT_CODE = 234037;
 
 export const FEISHU_BASE_URL = "https://open.feishu.cn";
 export const LARK_BASE_URL = "https://open.larksuite.com";
@@ -19,6 +20,18 @@ export class FeishuError extends Error {
     super(`${op} failed: code=${code} msg=${msg}`);
     this.name = "FeishuError";
   }
+}
+
+export class ResourceTooLargeError extends Error {
+  constructor(maxSize: number) {
+    super(`resource too large: exceeds ${maxSize} bytes`);
+    this.name = "ResourceTooLargeError";
+  }
+}
+
+export function isRetryableDownload(err: unknown): boolean {
+  if (err instanceof ResourceTooLargeError) return false;
+  return !(err instanceof FeishuError && err.code === RESOURCE_SIZE_LIMIT_CODE);
 }
 
 export class CredentialsRejectedError extends Error {
@@ -272,13 +285,12 @@ export class FeishuApi {
     } catch (err) {
       throw await toFeishuError("download resource", err);
     }
-    let limitError: Error | undefined;
     let data: Buffer;
     try {
-      data = await readLimited(stream, maxSize, () => (limitError = new Error(`resource too large: exceeds ${maxSize} bytes`)));
+      data = await readLimited(stream, maxSize, () => new ResourceTooLargeError(maxSize));
     } catch (err) {
       stream.destroy();
-      if (err === limitError) throw err;
+      if (err instanceof ResourceTooLargeError) throw err;
       throw new Error(`read resource: ${errorText(err)}`);
     }
     if (contentType.includes("application/json")) {

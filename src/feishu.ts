@@ -12,7 +12,17 @@ import {
   type SendResult,
 } from "@theopenbee/channel-sdk";
 
-import { CredentialsRejectedError, FeishuApi, FeishuError, REQUEST_TIMEOUT, httpWithTimeout, resolveDomain, sdkDomain, verifyCredentials } from "./api.js";
+import {
+  CredentialsRejectedError,
+  FeishuApi,
+  FeishuError,
+  REQUEST_TIMEOUT,
+  httpWithTimeout,
+  isRetryableDownload,
+  resolveDomain,
+  sdkDomain,
+  verifyCredentials,
+} from "./api.js";
 import {
   buildContext,
   encodeRaw,
@@ -49,6 +59,7 @@ export interface Timing {
   connectTimeout: number;
   retryAttempts: number;
   retryDelay: number;
+  downloadAttempts: number;
   reactionTimeout: number;
   recallWait: number;
   pendingTtl: number;
@@ -58,6 +69,7 @@ export const DEFAULT_TIMING: Timing = {
   connectTimeout: 30_000,
   retryAttempts: 5,
   retryDelay: 500,
+  downloadAttempts: 3,
   reactionTimeout: 30_000,
   recallWait: 5_000,
   pendingTtl: 10 * 60_000,
@@ -190,7 +202,16 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
   ): Promise<Attachment> => {
     try {
       if (!isValidKey(key)) throw new Error(`invalid file key: ${key}`);
-      const data = await api!.downloadResource(messageId, key, resType, cfg.maxMediaSize);
+      const data = await retryWithBackoff(() => api!.downloadResource(messageId, key, resType, cfg.maxMediaSize), {
+        attempts: timing.downloadAttempts,
+        delay: timing.retryDelay,
+        signal: lifetime.signal,
+        shouldRetry: (err) => {
+          if (!isRetryableDownload(err)) return false;
+          ctx.log.warn("download media failed, retrying", { key, error: errorText(err) });
+          return true;
+        },
+      });
       const mime = detectMime(data, fileName);
       const ext = (fileName ? fileExt(fileName) : "") || extensionFromMime(mime);
       const path = await ctx.saveMedia(data, ext);

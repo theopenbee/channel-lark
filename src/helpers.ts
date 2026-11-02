@@ -261,9 +261,10 @@ export interface RetryOptions {
   attempts: number;
   delay: number;
   signal?: AbortSignal;
+  shouldRetry?: (err: unknown) => boolean;
 }
 
-export async function retryWithBackoff<T>(fn: () => Promise<T>, { attempts, delay, signal }: RetryOptions): Promise<T> {
+export async function retryWithBackoff<T>(fn: () => Promise<T>, { attempts, delay, signal, shouldRetry }: RetryOptions): Promise<T> {
   if (attempts <= 0) return fn();
   let lastError: unknown;
   let wait = delay;
@@ -275,6 +276,7 @@ export async function retryWithBackoff<T>(fn: () => Promise<T>, { attempts, dela
       lastError = err;
     }
     if (i < attempts - 1) {
+      if (shouldRetry && !shouldRetry(lastError)) break;
       await sleep(wait, signal);
       wait *= 2;
     }
