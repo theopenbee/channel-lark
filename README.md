@@ -28,6 +28,8 @@ Feishu / Lark channel for openbee, built on [`@theopenbee/channel-sdk`](https://
 
 ## Install
 
+Install it from **Settings → Plugins → Marketplace**, or run:
+
 ```sh
 openbee plugin install @theopenbee/channel-lark
 ```
@@ -41,18 +43,9 @@ npm install
 openbee plugin install "$(pwd)"
 ```
 
-Then enable it with `openbee config`, or add it to `config.yaml` and restart openbee. A config written for the built-in channel works unchanged:
+Then fill in its settings and enable it under **Settings → Plugins** in the desktop app or the web console, or run `openbee plugin configure feishu`. Setup guide: https://theopenbee.com/docs/chat-apps/feishu/
 
-```yaml
-bee:
-  platforms:
-    feishu:
-      enabled: true
-      bot_name: OpenBee
-      app_id: "cli_xxxxxxxxxxxxxxxx"
-      app_secret: "<app secret>"
-      max_media_size: 104857600
-```
+Settings, also accepted as `openbee plugin configure feishu --set key=value`:
 
 | Key | Default | |
 |---|---|---|
@@ -61,7 +54,7 @@ bee:
 | `max_media_size` | `104857600` | Largest attachment, in bytes, downloaded from incoming messages. |
 | `domain` | `feishu` | Advanced. `feishu` (open.feishu.cn), `lark` (open.larksuite.com) or a base URL, for example a reverse proxy. |
 
-`bot_name` should match the bot's display name in Feishu so that mentions of the bot are recognised.
+Set **Bot name** (`--bot-name`) to the bot's display name in Feishu so that mentions of the bot are recognised.
 
 ## Development
 
