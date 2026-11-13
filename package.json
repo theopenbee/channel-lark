@@ -1,6 +1,6 @@
 {
   "name": "@theopenbee/channel-lark",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Feishu / Lark channel plugin for openbee",
   "keywords": [
     "openbee",
@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.76.0",
-    "@theopenbee/channel-sdk": "^0.2.0"
+    "@theopenbee/channel-sdk": "^0.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

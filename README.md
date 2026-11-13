@@ -12,6 +12,7 @@ Feishu / Lark channel for openbee, built on [`@theopenbee/channel-sdk`](https://
 - The bot puts a "Typing" reaction on every message it receives and removes it when it replies.
 - Replies quote the original message in groups and are plain messages in direct chats. If the original message was withdrawn, the reply is posted to the chat instead. Text is sent as a rich-text post with Markdown, one paragraph per line; text is sent first, then the file. Images are sent as images, `.mp4`/`.mov`/`.avi` as videos, `.opus`/`.ogg` as voice messages, anything else as a file (at most 30 MB).
 - Scheduled results and notifications are posted to the chat without quoting.
+- Messages with buttons (the `/clear` confirmation, choices offered by a worker or Bee) are sent as cards. Only the person the message answers can click; the click counts as their reply, and the card then shows the choice instead of the buttons.
 - `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` in openbee's environment are honoured for API calls; the long connection itself is opened directly.
 
 ## Create the app
@@ -23,7 +24,7 @@ Feishu / Lark channel for openbee, built on [`@theopenbee/channel-sdk`](https://
    - `im:message.p2p_msg:readonly` — receive direct messages
    - `im:message.group_at_msg:readonly` — receive group messages that @ the bot
    - `im:resource` — upload images and files and download message attachments
-4. Under *Events & Callbacks*, choose **Receive events through persistent connection** as the subscription mode and add the event `im.message.receive_v1` (*Receive messages*). The console only accepts this mode while a client is connected, so start openbee with the plugin enabled first if it complains.
+4. Under *Events & Callbacks*, choose **Receive events through persistent connection** as the subscription mode and add the event `im.message.receive_v1` (*Receive messages*). On the callback tab, choose the persistent connection too and add the callback `card.action.trigger` (*Card action*); without it, card buttons show an error when clicked. The console only accepts this mode while a client is connected, so start openbee with the plugin enabled first if it complains.
 5. Create a version and publish it. Add the bot to the groups it should serve.
 
 ## Install

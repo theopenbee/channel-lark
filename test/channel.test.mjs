@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import { createFeishuChannel } from "../dist/feishu.js";
 import { buildPostContent } from "../dist/post.js";
-import { APP_ID, APP_SECRET, MP4, OGG, PDF, PNG, TOKEN, messageEvent, startFakeFeishu } from "./fake-feishu.mjs";
+import { APP_ID, APP_SECRET, MP4, OGG, PDF, PNG, TOKEN, cardActionEvent, messageEvent, startFakeFeishu } from "./fake-feishu.mjs";
 import { FAST_TIMING, fakeConnector, fakeContext, sendRequest, startChannel, waitUntil } from "./harness.mjs";
 
 async function fakeFeishu(t, handlers) {
@@ -646,4 +646,169 @@ test("stopping the channel cancels a pending download retry", async (t) => {
   await waitUntil(() => dispatched.length === 1);
   assert.deepEqual(dispatched[0].attachments, [{ type: "image", path: "" }]);
   assert.equal(fake.of("resource").length, 1);
+});
+
+const clearButtons = [
+  { label: "Clear", text: "/clear", style: "danger" },
+  { label: "Cancel", text: "/clear cancel" },
+];
+
+async function sendButtonCard(t, { language, buttons = clearButtons } = {}) {
+  const fake = await fakeFeishu(t);
+  const env = await startChannel(t, fake, { language });
+  const { channel, ctx } = env;
+  const res = await channel.send(
+    sendRequest({ reply_to: { message_id: "om_1", raw: groupRaw }, content: "**Clear** the session?", buttons }),
+    ctx,
+    new AbortController().signal,
+  );
+  return { fake, ...env, cardId: res.platform_message_id };
+}
+
+function buttonValue(cardId, fake, index) {
+  const reply = fake.of("reply").find((c) => c.body.msg_type === "interactive");
+  const card = JSON.parse(reply.body.content);
+  return card.body.elements[1].columns[index].elements[0].behaviors[0].value;
+}
+
+test("messages with buttons are sent as cards with one callback per button", async (t) => {
+  const { fake, cardId } = await sendButtonCard(t);
+  assert.match(cardId, /^om_sent_/);
+  const [reply] = fake.of("reply");
+  assert.deepEqual(reply.params, ["om_1"]);
+  assert.equal(reply.body.msg_type, "interactive");
+  assert.deepEqual(JSON.parse(reply.body.content), {
+    schema: "2.0",
+    config: { update_multi: true },
+    body: {
+      elements: [
+        { tag: "markdown", content: "**Clear** the session?" },
+        {
+          tag: "column_set",
+          flex_mode: "flow",
+          horizontal_spacing: "8px",
+          columns: [
+            {
+              tag: "column",
+              width: "auto",
+              elements: [
+                {
+                  tag: "button",
+                  text: { tag: "plain_text", content: "Clear" },
+                  type: "danger",
+                  behaviors: [{ type: "callback", value: { openbee: 1, label: "Clear", text: "/clear", scope: "ou_user", chat_type: "group" } }],
+                },
+              ],
+            },
+            {
+              tag: "column",
+              width: "auto",
+              elements: [
+                {
+                  tag: "button",
+                  text: { tag: "plain_text", content: "Cancel" },
+                  type: "default",
+                  behaviors: [{ type: "callback", value: { openbee: 1, label: "Cancel", text: "/clear cancel", scope: "ou_user", chat_type: "group" } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+});
+
+test("a click by the session owner sends the button text and closes the buttons", async (t) => {
+  const { fake, connector, dispatched, cardId } = await sendButtonCard(t, { language: "zh" });
+  const result = await connector.deliver(cardActionEvent({ messageId: cardId, value: buttonValue(cardId, fake, 0) }));
+  assert.deepEqual(result, {
+    card: {
+      type: "raw",
+      data: {
+        schema: "2.0",
+        config: { update_multi: true },
+        body: {
+          elements: [
+            { tag: "markdown", content: "**Clear** the session?" },
+            { tag: "div", text: { tag: "plain_text", content: "已选择：Clear", text_color: "grey", text_size: "notation" } },
+          ],
+        },
+      },
+    },
+  });
+  assert.equal(dispatched.length, 1);
+  const { time, ...inbound } = dispatched[0];
+  assert.ok(time > 0);
+  assert.deepEqual(inbound, {
+    chat_id: "oc_group",
+    sender_id: "ou_user",
+    session_scope: "ou_user",
+    message_id: cardId,
+    text: "/clear",
+    raw: JSON.stringify({ event: { message: { message_id: cardId, chat_id: "oc_group", chat_type: "group" } } }),
+    context: {
+      sender: { open_id: "ou_user", union_id: "on_user", sender_type: "user" },
+      message: { chat_id: "oc_group", chat_type: "group", message_id: cardId, message_type: "interactive", mentions: null },
+    },
+  });
+  const reaction = await fake.waitFor((c) => c.route === "reaction_add");
+  assert.deepEqual(reaction.params, [cardId]);
+
+  const again = await connector.deliver(cardActionEvent({ messageId: cardId, value: buttonValue(cardId, fake, 1) }));
+  assert.deepEqual(again, { toast: { type: "info", content: "已选择：Cancel" } });
+  assert.equal(dispatched.length, 1);
+});
+
+test("a click by someone else is refused", async (t) => {
+  const { fake, connector, dispatched, cardId } = await sendButtonCard(t);
+  const result = await connector.deliver(
+    cardActionEvent({ messageId: cardId, operator: { open_id: "ou_other", union_id: "on_other" }, value: buttonValue(cardId, fake, 0) }),
+  );
+  assert.deepEqual(result, { toast: { type: "warning", content: "Only the person who asked can choose" } });
+  assert.equal(dispatched.length, 0);
+
+  const owner = await connector.deliver(cardActionEvent({ messageId: cardId, value: buttonValue(cardId, fake, 0) }));
+  assert.equal(owner.card.type, "raw");
+  assert.equal(dispatched.length, 1);
+});
+
+test("a click on a card the channel no longer tracks still sends the text", async (t) => {
+  const fake = await fakeFeishu(t);
+  const { connector, dispatched } = await startChannel(t, fake);
+  const value = { openbee: 1, label: "Merge", text: "@Maomao Merge", scope: "ou_user", chat_type: "p2p" };
+  const result = await connector.deliver(cardActionEvent({ messageId: "om_old", chatId: "oc_p2p", value }));
+  assert.deepEqual(result, { toast: { type: "info", content: "Selected: Merge" } });
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].text, "@Maomao Merge");
+  assert.equal(dispatched[0].chat_id, "oc_p2p");
+  assert.equal(JSON.parse(dispatched[0].raw).event.message.chat_type, "p2p");
+});
+
+test("card actions without openbee button data are ignored", async (t) => {
+  const fake = await fakeFeishu(t);
+  const { connector, dispatched, logs } = await startChannel(t, fake);
+  const invalid = [
+    undefined,
+    { foo: "bar" },
+    { openbee: 1, label: "", text: "x", scope: "ou_user", chat_type: "" },
+    { openbee: 1, label: "Cancel", text: "", scope: "ou_user", chat_type: "" },
+  ];
+  for (const value of invalid) {
+    assert.equal(await connector.deliver(cardActionEvent({ value })), undefined);
+  }
+  assert.equal(dispatched.length, 0);
+  assert.equal(logs.filter((l) => l.message === "skipping card action without openbee button data").length, 4);
+});
+
+test("buttons without content are not sent", async (t) => {
+  const fake = await fakeFeishu(t);
+  const { channel, ctx, mediaDir } = await startChannel(t, fake);
+  const file = join(mediaDir, "a.pdf");
+  writeFileSync(file, PDF);
+  await channel.send(sendRequest({ proactive: true, media: { path: file, name: "a.pdf" }, buttons: clearButtons }), ctx, new AbortController().signal);
+  assert.deepEqual(
+    fake.of("create").map((c) => c.body.msg_type),
+    ["file"],
+  );
 });

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { APP_ID, APP_SECRET, PNG, TOKEN, messageEvent, startFakeFeishu } from "./fake-feishu.mjs";
+import { APP_ID, APP_SECRET, PNG, TOKEN, cardActionEvent, messageEvent, startFakeFeishu } from "./fake-feishu.mjs";
 import { FRAME_DATA, attachFakeWs } from "./fake-ws.mjs";
 
 const entry = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
@@ -132,7 +132,7 @@ test("end to end over the long connection: inbound, reaction, reply and shutdown
   const mediaDir = mkdtempSync(join(tmpdir(), "feishu-media-"));
   const p = startPlugin();
   const init = await initialize(p, { app_id: APP_ID, app_secret: APP_SECRET, max_media_size: 1024, domain: fake.url }, mediaDir);
-  assert.deepEqual(init.result, { protocol_version: 1 });
+  assert.deepEqual(init.result, { protocol_version: 1, capabilities: { buttons: true } });
   assert.equal(ws.state.connections, 1);
 
   const wsId = ws.pushEvent(
@@ -159,6 +159,29 @@ test("end to end over the long connection: inbound, reaction, reply and shutdown
   assert.match(res.result.platform_message_id, /^om_sent_/);
   assert.deepEqual(fake.of("reply")[0].params, ["om_1"]);
   await fake.waitFor((c) => c.route === "reaction_delete");
+
+  const card = await p.request("send", {
+    session_key: "feishu:oc_group:ou_user",
+    chat_id: "oc_group",
+    session_scope: "ou_user",
+    proactive: false,
+    reply_to: { message_id: "om_1", raw: inbound.params.raw },
+    content: "Merge now?",
+    buttons: [{ label: "Merge", text: "@Maomao Merge" }],
+  });
+  const cardId = card.result.platform_message_id;
+  assert.equal(fake.of("reply")[1].body.msg_type, "interactive");
+  const clickId = ws.pushEvent(
+    cardActionEvent({ messageId: cardId, value: { openbee: 1, label: "Merge", text: "@Maomao Merge", scope: "ou_user", chat_type: "group" } }),
+  );
+  const clickAck = await ws.waitForFrame((f) => f.method === FRAME_DATA && f.headers.message_id === clickId);
+  const clickResp = JSON.parse(clickAck.payload.toString("utf8"));
+  assert.equal(clickResp.code, 200);
+  const updated = JSON.parse(Buffer.from(clickResp.data, "base64").toString("utf8"));
+  assert.equal(updated.card.data.body.elements[1].text.content, "Selected: Merge");
+  const click = await p.waitFor((m) => m.method === "inbound" && m.params.message_id === cardId);
+  assert.equal(click.params.text, "@Maomao Merge");
+  assert.equal(click.params.session_scope, "ou_user");
 
   ws.pushEvent(messageEvent({ messageId: "om_img", type: "image", content: { image_key: "img_e2e" } }));
   const image = await p.waitFor((m) => m.method === "inbound" && m.params.message_id === "om_img");
@@ -205,7 +228,7 @@ test("a long connection lost for good makes the plugin exit", async (t) => {
   t.after(() => ws.dropConnections());
   const p = startPlugin();
   const init = await initialize(p, { app_id: APP_ID, app_secret: APP_SECRET, domain: fake.url });
-  assert.deepEqual(init.result, { protocol_version: 1 });
+  assert.deepEqual(init.result, { protocol_version: 1, capabilities: { buttons: true } });
   ws.state.accepting = false;
   ws.dropConnections();
   assert.equal(await p.exited, 1);
@@ -219,7 +242,7 @@ test("the plugin exits when stdin closes", async (t) => {
   t.after(() => ws.dropConnections());
   const p = startPlugin();
   const init = await initialize(p, { app_id: APP_ID, app_secret: APP_SECRET, domain: fake.url });
-  assert.deepEqual(init.result, { protocol_version: 1 });
+  assert.deepEqual(init.result, { protocol_version: 1, capabilities: { buttons: true } });
   p.child.stdin.end();
   assert.equal(await p.exited, 0);
 });

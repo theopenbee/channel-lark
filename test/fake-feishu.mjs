@@ -165,6 +165,32 @@ export function messageEvent({
   };
 }
 
+export function cardActionEvent({
+  messageId = "om_sent_1",
+  chatId = "oc_group",
+  operator = { open_id: "ou_user", union_id: "on_user", user_id: "u_user" },
+  value,
+} = {}) {
+  return {
+    schema: "2.0",
+    header: {
+      event_id: `evt_card_${messageId}`,
+      token: "",
+      create_time: "1700000000999",
+      event_type: "card.action.trigger",
+      tenant_key: "tk_1",
+      app_id: APP_ID,
+    },
+    event: {
+      operator: { tenant_key: "tk_1", ...operator },
+      token: "c-token",
+      action: { tag: "button", value },
+      host: "im_message",
+      context: { open_message_id: messageId, open_chat_id: chatId },
+    },
+  };
+}
+
 export const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
 export const OGG = Buffer.concat([Buffer.from("OggS\x00\x02", "latin1"), Buffer.alloc(32)]);
 export const PDF = Buffer.from("%PDF-1.4\n%fake\n", "latin1");

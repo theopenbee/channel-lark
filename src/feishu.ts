@@ -43,6 +43,14 @@ import {
   type MessageEvent,
   type ReplyTarget,
 } from "./helpers.js";
+import {
+  buildAnsweredCard,
+  buildButtonCard,
+  notOwnerText,
+  parseCardAction,
+  selectedNote,
+  type CardActionEvent,
+} from "./card.js";
 import { larkLogger } from "./logger.js";
 import { detectMime, extensionFromMime, fileExt, mediaTypeFromMime, mimeFromExtension } from "./mime.js";
 import { buildPostContent, parsePostContent } from "./post.js";
@@ -54,6 +62,7 @@ const TYPING_EMOJI = "Typing";
 const REPLY_FALLBACK_CODES = new Set([230011, 231003]);
 const APP_ID_PATTERN = /^cli_[0-9a-fA-F]{16}$/;
 const MEDIA_MESSAGE_TYPES = new Set(["image", "file", "audio", "video", "media", "sticker"]);
+const MAX_TRACKED_CARDS = 500;
 
 export interface Timing {
   connectTimeout: number;
@@ -117,6 +126,11 @@ function cancelled(signal: AbortSignal): void {
   if (signal.aborted) throw new Error("send cancelled");
 }
 
+interface SentCard {
+  markdown: string;
+  answered: boolean;
+}
+
 interface PendingReaction {
   reaction: Promise<string | undefined>;
   timer?: NodeJS.Timeout;
@@ -138,6 +152,7 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
   const timing: Timing = { ...DEFAULT_TIMING, ...options.timing };
   const onFatal = options.onFatal ?? defaultFatal;
   const pending = new Map<string, PendingReaction>();
+  const cards = new Map<string, SentCard>();
   let cfg: FeishuConfig;
   let api: FeishuApi | undefined;
   let lifetime = new AbortController();
@@ -311,6 +326,45 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
     startReaction();
   };
 
+  const handleCardAction = (ctx: ChannelContext, event: CardActionEvent) => {
+    const messageId = event.context?.open_message_id ?? event.open_message_id ?? "";
+    const chatId = event.context?.open_chat_id ?? event.open_chat_id ?? "";
+    const operator = event.operator?.open_id ?? "";
+    const action = parseCardAction(event.action?.value);
+    ctx.log.info("received card action", { message_id: messageId, chat_id: chatId, operator_open_id: operator });
+    if (!action || !messageId || !chatId || !operator) {
+      ctx.log.warn("skipping card action without openbee button data", { message_id: messageId });
+      return undefined;
+    }
+    if (operator !== action.scope) return { toast: { type: "warning", content: notOwnerText(ctx.language) } };
+    const note = selectedNote(ctx.language, action.label);
+    const sent = cards.get(messageId);
+    if (sent?.answered) return { toast: { type: "info", content: note } };
+    const startReaction = trackReaction(ctx, messageId);
+    ctx.dispatch({
+      chat_id: chatId,
+      sender_id: operator,
+      session_scope: action.scope,
+      message_id: messageId,
+      text: action.text,
+      raw: encodeRaw({ message_id: messageId, chat_id: chatId, chat_type: action.chatType }),
+      context: {
+        sender: { open_id: operator, union_id: event.operator?.union_id ?? "", sender_type: "user" },
+        message: { chat_id: chatId, chat_type: action.chatType, message_id: messageId, message_type: "interactive", mentions: null },
+      },
+      time: Date.now(),
+    });
+    startReaction();
+    if (!sent) return { toast: { type: "info", content: note } };
+    sent.answered = true;
+    return { card: { type: "raw", data: buildAnsweredCard(sent.markdown, note) } };
+  };
+
+  const rememberCard = (messageId: string, markdown: string) => {
+    cards.set(messageId, { markdown, answered: false });
+    if (cards.size > MAX_TRACKED_CARDS) cards.delete(cards.keys().next().value!);
+  };
+
   const deliver = async (ctx: ChannelContext, target: ReplyTarget, msgType: string, content: string): Promise<string | undefined> => {
     if (target.chatType === "p2p" || !target.messageId) return api!.createMessage(target.chatId, msgType, content);
     try {
@@ -391,6 +445,7 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
   };
 
   return {
+    capabilities: { buttons: true },
     async start(ctx) {
       cfg = readConfig(ctx.config);
       lifetime = new AbortController();
@@ -407,6 +462,7 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
         "im.message.receive_v1": (data) => {
           handleEvent(ctx, data as MessageEvent).catch((err) => ctx.log.error("handle message failed", { error: errorText(err) }));
         },
+        "card.action.trigger": (data: unknown) => handleCardAction(ctx, data as CardActionEvent),
       });
       const connection = await openConnection(ctx, dispatcher);
       ctx.log.info("feishu bot connected", { app_id: cfg.appId, domain: cfg.baseUrl });
@@ -415,6 +471,7 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
           lifetime.abort();
           for (const entry of pending.values()) if (entry.timer) clearTimeout(entry.timer);
           pending.clear();
+          cards.clear();
           connection.close();
         },
       };
@@ -427,7 +484,12 @@ export function createFeishuChannel(options: FeishuChannelOptions = {}): Channel
       if (!target.chatId) throw new Error("no chat to send to");
       if (fromRaw) recallReaction(ctx, fromRaw.messageId);
       let last: string | undefined;
-      if (msg.content) {
+      if (msg.content && msg.buttons?.length) {
+        cancelled(signal);
+        const card = buildButtonCard(msg.content, msg.buttons, msg.session_scope, target.chatType);
+        last = await deliver(ctx, target, "interactive", JSON.stringify(card));
+        if (last) rememberCard(last, msg.content);
+      } else if (msg.content) {
         cancelled(signal);
         last = await deliver(ctx, target, "post", buildPostContent(msg.content));
       }
