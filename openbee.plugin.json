@@ -4,6 +4,7 @@
   "name": { "en": "Feishu / Lark", "zh": "飞书" },
   "description": { "en": "Feishu / Lark bot channel", "zh": "飞书 / Lark 机器人渠道" },
   "command": ["node", "dist/index.js"],
+  "icon": "icon.svg",
   "config": [
     {
       "key": "app_id",
